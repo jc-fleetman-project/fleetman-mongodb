@@ -15,6 +15,7 @@ spec:
       containers:
       - name: mongodb
         image: mongo:3.6.5-jessie
+        imagePullPolicy: IfNotPresent
         volumeMounts:
           - name: mongo-persistent-storage
             mountPath: /data/db
