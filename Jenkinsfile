@@ -2,12 +2,22 @@ pipeline {
    agent any
 
    environment {
-     // You must set the following environment variables
-     // ORGANIZATION_NAME
-     // YOUR_DOCKERHUB_USERNAME (it doesn't matter if you don't have one)
+     // Name des Service
+     SERVICE_NAME = "fleetman-mongodb"
 
-     SERVICE_NAME = "fleetman-mongodb"     
-     REPOSITORY_TAG="${YOUR_DOCKERHUB_USERNAME}/${ORGANIZATION_NAME}-${SERVICE_NAME}:${BUILD_ID}"
+     // Tag für Docker, bestehend aus Repository Name und Tag des Image
+     REPOSITORY_TAG ="${YOUR_DOCKERHUB_USERNAME}/${SERVICE_NAME}:${BUILD_ID}"
+
+     // dockerhub Zugangsdaten
+     DOCKERHUB_CREDENTIALS = 'dockerhub'
+     dockerImage = ''
+
+     // GCE
+     PROJECT_ID = 'capable-arbor-268514'
+     CLUSTER_NAME = 'cluster-1'
+     LOCATION = 'us-central1-a'
+     MANIFEST = 'deploy.yaml'
+     CREDENTIALS_ID = 'gke'
    }
 
    stages {
@@ -19,22 +29,51 @@ pipeline {
       }
       stage('Build') {
          steps {
-            sh '''echo No build required for Mongodb'''
+            sh '''mvn clean package'''
          }
       }
 
-      stage('Build and Push Image') {
-         steps {
-           sh 'echo No docker image for Mongodb'
-         }
+      stage('Build Image') {
+        steps{
+          script {
+            dockerImage = docker.build "$REPOSITORY_TAG"
+          }
+        }
+      }
+
+      stage('Push Image') {
+        steps{
+          script {
+            docker.withRegistry( '', DOCKERHUB_CREDENTIALS ) {
+              dockerImage.push()
+            }
+          }
+        }
       }
 
       stage('Deploy to Cluster') {
           steps {
-                // withKubeConfig(contextName: 'default', credentialsId: '9a91910b-c106-47bc-bc12-757dfd2ad6a2', namespace: 'default', serverUrl: '${KUBERNETES_API_SERVER}') {
-                    sh 'envsubst < ${WORKSPACE}/deploy.yaml | kubectl apply -f -'
-                // }
+            // ersetzt die Umgebungsvariable REPOSITORY_TAG im Kubernetes Deployment
+            sh "sed -i 's/<<YOUR_DOCKERHUB_USERNAME>>/${YOUR_DOCKERHUB_USERNAME}/g' ${env.MANIFEST}"
+            sh "sed -i 's/<<SERVICE_NAME>>/${SERVICE_NAME}/g' ${env.MANIFEST}"
+            sh "sed -i 's/<<BUILD_ID>>/${BUILD_ID}/g' ${env.MANIFEST}"
+
+            // Führt das Deployment aus
+            step([
+              $class: 'KubernetesEngineBuilder',
+              projectId: env.PROJECT_ID,
+              clusterName: env.CLUSTER_NAME,
+              location: env.LOCATION,
+              manifestPattern: env.MANIFEST,
+              credentialsId: env.CREDENTIALS_ID,
+              verifyDeployments: true])
           }
+      }
+
+      stage('Remove Unused docker image') {
+        steps{
+          sh "docker rmi $REPOSITORY_TAG"
+        }
       }
    }
 }
